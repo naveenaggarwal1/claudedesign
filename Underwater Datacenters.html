@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>The AI compute race goes underwater</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    background: #0a0a0a;
+    overflow: hidden;
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- ── Animation framework ──────────────────────────────────────────────────── -->
+<script type="text/babel">
+
+// ── Easing functions ──────────────────────────────────────────────────────────
+const Easing = {
+  linear: (t) => t,
+  easeInQuad:    (t) => t * t,
+  easeOutQuad:   (t) => t * (2 - t),
+  easeInOutQuad: (t) => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t),
+  easeInCubic:    (t) => t * t * t,
+  easeOutCubic:   (t) => (--t) * t * t + 1,
+  easeInOutCubic: (t) => (t < 0.5 ? 4 * t * t * t : (t - 1) * (2 * t - 2) * (2 * t - 2) + 1),
+  easeInQuart:    (t) => t * t * t * t,
+  easeOutQuart:   (t) => 1 - (--t) * t * t * t,
+  easeInOutQuart: (t) => (t < 0.5 ? 8 * t * t * t * t : 1 - 8 * (--t) * t * t * t),
+  easeInExpo:  (t) => (t === 0 ? 0 : Math.pow(2, 10 * (t - 1))),
+  easeOutExpo: (t) => (t === 1 ? 1 : 1 - Math.pow(2, -10 * t)),
+  easeInOutExpo: (t) => {
+    if (t === 0) return 0;
+    if (t === 1) return 1;
+    if (t < 0.5) return 0.5 * Math.pow(2, 20 * t - 10);
+    return 1 - 0.5 * Math.pow(2, -20 * t + 10);
+  },
+  easeInSine:    (t) => 1 - Math.cos((t * Math.PI) / 2),
+  easeOutSine:   (t) => Math.sin((t * Math.PI) / 2),
+  easeInOutSine: (t) => -(Math.cos(Math.PI * t) - 1) / 2,
+  easeOutBack: (t) => {
+    const c1 = 1.70158, c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+  },
+  easeInBack: (t) => {
+    const c1 = 1.70158, c3 = c1 + 1;
+    return c3 * t * t * t - c1 * t * t;
+  },
+  easeInOutBack: (t) => {
+    const c1 = 1.70158, c2 = c1 * 1.525;
+    return t < 0.5
+      ? (Math.pow(2 * t, 2) * ((c2 + 1) * 2 * t - c2)) / 2
+      : (Math.pow(2 * t - 2, 2) * ((c2 + 1) * (t * 2 - 2) + c2) + 2) / 2;
+  },
+  easeOutElastic: (t) => {
+    const c4 = (2 * Math.PI) / 3;
+    if (t === 0) return 0;
+    if (t === 1) return 1;
+    return Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
+  },
+};
+
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+function interpolate(input, output, ease = Easing.linear) {
+  return (t) => {
+    if (t <= input[0]) return output[0];
+    if (t >= input[input.length - 1]) return output[output.length - 1];
+    for (let i = 0; i < input.length - 1; i++) {
+      if (t >= input[i] && t <= input[i + 1]) {
+        const span = input[i + 1] - input[i];
+        const local = span === 0 ? 0 : (t - input[i]) / span;
+        const easeFn = Array.isArray(ease) ? (ease[i] || Easing.linear) : ease;
+        const eased = easeFn(local);
+        return output[i] + (output[i + 1] - output[i]) * eased;
+      }
+    }
+    return output[output.length - 1];
+  };
+}
+
+function animate({ from = 0, to = 1, start = 0, end = 1, ease = Easing.easeInOutCubic }) {
+  return (t) => {
+    if (t <= start) return from;
+    if (t >= end) return to;
+    const local = (t - start) / (end - start);
+    return from + (to - from) * ease(local);
+  };
+}
+
+// ── Timeline context ──────────────────────────────────────────────────────────
+const TimelineContext = React.createContext({ time: 0, duration: 10, playing: false });
+const useTime = () => React.useContext(TimelineContext).time;
+const useTimeline = () => React.useContext(TimelineContext);
+
+// ── Sprite ────────────────────────────────────────────────────────────────────
+const SpriteContext = React.createContext({ localTime: 0, progress: 0, duration: 0 });
+const useSprite = () => React.useContext(SpriteContext);
+
+function Sprite({ start = 0, end = Infinity, children, keepMounted = false }) {
+  const { time } = useTimeline();
+  const visible = time >= start && time <= end;
+  if (!visible && !keepMounted) return null;
+
+  const duration = end - start;
+  const localTime = Math.max(0, time - start);
+  const progress = duration > 0 && isFinite(duration)
+    ? clamp(localTime / duration, 0, 1)
+    : 0;
+
+  const value = { localTime, progress, duration, visible };
+
+  return (
+    <SpriteContext.Provider value={value}>
+      {typeof children === 'function' ? children(value) : children}
+    </SpriteContext.Provider>
+  );
+}
+
+// ── Stage ─────────────────────────────────────────────────────────────────────
+function Stage({
+  width = 1280,
+  height = 720,
+  duration = 10,
+  background = '#f6f4ef',
+  loop = true,
+  autoplay = true,
+  persistKey = 'animstage',
+  children,
+}) {
+  const [time, setTime] = React.useState(() => {
+    try {
+      const v = parseFloat(localStorage.getItem(persistKey + ':t') || '0');
+      return isFinite(v) ? clamp(v, 0, duration) : 0;
+    } catch { return 0; }
+  });
+  const [playing, setPlaying] = React.useState(autoplay);
+  const [hoverTime, setHoverTime] = React.useState(null);
+  const [scale, setScale] = React.useState(1);
+
+  const stageRef = React.useRef(null);
+  const canvasRef = React.useRef(null);
+  const rafRef = React.useRef(null);
+  const lastTsRef = React.useRef(null);
+
+  React.useEffect(() => {
+    try { localStorage.setItem(persistKey + ':t', String(time)); } catch {}
+  }, [time, persistKey]);
+
+  React.useEffect(() => {
+    if (!stageRef.current) return;
+    const el = stageRef.current;
+    const measure = () => {
+      const barH = 44;
+      const s = Math.min(el.clientWidth / width, (el.clientHeight - barH) / height);
+      setScale(Math.max(0.05, s));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
+  }, [width, height]);
+
+  React.useEffect(() => {
+    if (!playing) { lastTsRef.current = null; return; }
+    const step = (ts) => {
+      if (lastTsRef.current == null) lastTsRef.current = ts;
+      const dt = (ts - lastTsRef.current) / 1000;
+      lastTsRef.current = ts;
+      setTime((t) => {
+        let next = t + dt;
+        if (next >= duration) {
+          if (loop) next = next % duration;
+          else { next = duration; setPlaying(false); }
+        }
+        return next;
+      });
+      rafRef.current = requestAnimationFrame(step);
+    };
+    rafRef.current = requestAnimationFrame(step);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      lastTsRef.current = null;
+    };
+  }, [playing, duration, loop]);
+
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+      if (e.code === 'Space') {
+        e.preventDefault();
+        setPlaying(p => !p);
+      } else if (e.code === 'ArrowLeft') {
+        setTime(t => clamp(t - (e.shiftKey ? 1 : 0.1), 0, duration));
+      } else if (e.code === 'ArrowRight') {
+        setTime(t => clamp(t + (e.shiftKey ? 1 : 0.1), 0, duration));
+      } else if (e.key === '0' || e.code === 'Home') {
+        setTime(0);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [duration]);
+
+  const displayTime = hoverTime != null ? hoverTime : time;
+  const ctxValue = React.useMemo(
+    () => ({ time: displayTime, duration, playing, setTime, setPlaying }),
+    [displayTime, duration, playing]
+  );
+
+  return (
+    <div ref={stageRef} style={{
+      position: 'absolute', inset: 0,
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      background: '#0a0a0a',
+      fontFamily: 'Inter, system-ui, sans-serif',
+    }}>
+      <div style={{
+        flex: 1, width: '100%',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        overflow: 'hidden', minHeight: 0,
+      }}>
+        <div ref={canvasRef} style={{
+          width, height, background,
+          position: 'relative',
+          transform: `scale(${scale})`,
+          transformOrigin: 'center',
+          flexShrink: 0,
+          boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
+          overflow: 'hidden',
+        }}>
+          <TimelineContext.Provider value={ctxValue}>
+            {children}
+          </TimelineContext.Provider>
+        </div>
+      </div>
+      <PlaybackBar
+        time={displayTime}
+        duration={duration}
+        playing={playing}
+        onPlayPause={() => setPlaying(p => !p)}
+        onReset={() => setTime(0)}
+        onSeek={(t) => setTime(t)}
+        onHover={(t) => setHoverTime(t)}
+      />
+    </div>
+  );
+}
+
+// ── Playback bar ──────────────────────────────────────────────────────────────
+function PlaybackBar({ time, duration, playing, onPlayPause, onReset, onSeek, onHover }) {
+  const trackRef = React.useRef(null);
+  const [dragging, setDragging] = React.useState(false);
+
+  const timeFromEvent = React.useCallback((e) => {
+    const rect = trackRef.current.getBoundingClientRect();
+    const x = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+    return x * duration;
+  }, [duration]);
+
+  const onTrackMove = (e) => {
+    if (!trackRef.current) return;
+    const t = timeFromEvent(e);
+    if (dragging) onSeek(t);
+    else onHover(t);
+  };
+
+  const onTrackLeave = () => { if (!dragging) onHover(null); };
+
+  const onTrackDown = (e) => {
+    setDragging(true);
+    onSeek(timeFromEvent(e));
+    onHover(null);
+  };
+
+  React.useEffect(() => {
+    if (!dragging) return;
+    const onUp = () => setDragging(false);
+    const onMove = (e) => { if (trackRef.current) onSeek(timeFromEvent(e)); };
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('mousemove', onMove);
+    return () => { window.removeEventListener('mouseup', onUp); window.removeEventListener('mousemove', onMove); };
+  }, [dragging, timeFromEvent, onSeek]);
+
+  const pct = duration > 0 ? (time / duration) * 100 : 0;
+  const fmt = (t) => {
+    const total = Math.max(0, t);
+    const m = Math.floor(total / 60);
+    const s = Math.floor(total % 60);
+    const cs = Math.floor((total * 100) % 100);
+    return `${String(m).padStart(1, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
+  };
+  const mono = 'IBM Plex Mono, ui-monospace, monospace';
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12,
+      padding: '8px 16px',
+      background: 'rgba(20,20,20,0.92)',
+      borderTop: '1px solid rgba(255,255,255,0.08)',
+      width: '100%', maxWidth: 680, alignSelf: 'center',
+      borderRadius: 8, color: '#f6f4ef',
+      fontFamily: 'IBM Plex Sans, system-ui, sans-serif',
+      userSelect: 'none', flexShrink: 0,
+    }}>
+      <IconButton onClick={onReset} title="Return to start (0)">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M3 2v10M12 2L5 7l7 5V2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"/>
+        </svg>
+      </IconButton>
+      <IconButton onClick={onPlayPause} title="Play/pause (space)">
+        {playing ? (
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="3" y="2" width="3" height="10" fill="currentColor"/>
+            <rect x="8" y="2" width="3" height="10" fill="currentColor"/>
+          </svg>
+        ) : (
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M3 2l9 5-9 5V2z" fill="currentColor"/>
+          </svg>
+        )}
+      </IconButton>
+      <div style={{
+        fontFamily: mono, fontSize: 12,
+        fontVariantNumeric: 'tabular-nums',
+        width: 64, textAlign: 'right', color: '#f6f4ef',
+      }}>
+        {fmt(time)}
+      </div>
+      <div ref={trackRef}
+        onMouseMove={onTrackMove}
+        onMouseLeave={onTrackLeave}
+        onMouseDown={onTrackDown}
+        style={{
+          flex: 1, height: 22, position: 'relative',
+          cursor: 'pointer', display: 'flex', alignItems: 'center',
+        }}
+      >
+        <div style={{
+          position: 'absolute', left: 0, right: 0, height: 4,
+          background: 'rgba(255,255,255,0.12)', borderRadius: 2,
+        }}/>
+        <div style={{
+          position: 'absolute', left: 0, width: `${pct}%`, height: 4,
+          background: 'oklch(72% 0.12 250)', borderRadius: 2,
+        }}/>
+        <div style={{
+          position: 'absolute', left: `${pct}%`, top: '50%',
+          width: 12, height: 12, marginLeft: -6, marginTop: -6,
+          background: '#fff', borderRadius: 6,
+          boxShadow: '0 2px 4px rgba(0,0,0,0.4)',
+        }}/>
+      </div>
+      <div style={{
+        fontFamily: mono, fontSize: 12,
+        fontVariantNumeric: 'tabular-nums',
+        width: 64, textAlign: 'left',
+        color: 'rgba(246,244,239,0.55)',
+      }}>
+        {fmt(duration)}
+      </div>
+    </div>
+  );
+}
+
+function IconButton({ children, onClick, title }) {
+  const [hover, setHover] = React.useState(false);
+  return (
+    <button onClick={onClick} title={title}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        width: 28, height: 28,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: hover ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: 6, color: '#f6f4ef',
+        cursor: 'pointer', padding: 0,
+        transition: 'background 120ms',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ── Scene palette + type ──────────────────────────────────────────────────────
+const PALETTE = {
+  bg: '#f4ede0',
+  bgDeep: '#e8dcc4',
+  ink: '#0e2436',
+  blue: '#2a6fa5',
+  blueDeep: '#143654',
+  blueLight: '#7fb3d5',
+  white: '#ffffff',
+  accent: '#c97f4a',
+};
+
+const SERIF = '"Cormorant Garamond", "EB Garamond", Georgia, serif';
+const SANS  = '"IBM Plex Sans", "Helvetica Neue", sans-serif';
+const MONO  = '"IBM Plex Mono", ui-monospace, monospace';
+
+// ── Shared components ─────────────────────────────────────────────────────────
+
+function WaveLayer({ amplitude, wavelength, phase, y, color, opacity, time, width = 1920 }) {
+  const points = [];
+  const step = 12;
+  for (let x = 0; x <= width; x += step) {
+    const yy = y + Math.sin((x / wavelength) + phase + time) * amplitude;
+    points.push(`${x},${yy}`);
+  }
+  const path = `M0,${y + amplitude * 2} L${points.join(' L')} L${width},${y + amplitude * 2} Z`;
+  return <path d={path} fill={color} opacity={opacity} />;
+}
+
+function Fish({ x, y, scale = 1, dir = 1, color = PALETTE.ink }) {
+  return (
+    <g transform={`translate(${x},${y}) scale(${dir * scale}, ${scale})`}>
+      <path d="M0 0 Q-12 -6 -22 0 Q-12 6 0 0 Z" fill="none" stroke={color} strokeWidth="1.5" />
+      <path d="M-22 0 L-30 -5 L-30 5 Z" fill="none" stroke={color} strokeWidth="1.5" />
+      <circle cx="-3" cy="-1.5" r="0.8" fill={color} />
+    </g>
+  );
+}
+
+function Bubble({ x, y, r, opacity = 1 }) {
+  return (
+    <circle cx={x} cy={y} r={r} fill="none" stroke={PALETTE.blueLight} strokeWidth="1" opacity={opacity} />
+  );
+}
+
+// ─── SCENE 1: Cold open (0–5s) ────────────────────────────────────────────────
+
+function Scene1ColdOpen() {
+  const { localTime } = useSprite();
+  const t = localTime;
+
+  const titleOpacity = interpolate([0, 0.6, 4.0, 4.8], [0, 1, 1, 0], Easing.easeOutCubic)(t);
+  const titleY = interpolate([0, 0.8], [30, 0], Easing.easeOutCubic)(t);
+  const subOpacity = interpolate([0.7, 1.4, 4.0, 4.8], [0, 1, 1, 0], Easing.easeOutCubic)(t);
+  const cameraScale = interpolate([0, 5], [1.0, 1.06], Easing.linear)(t);
+
+  return (
+    <div style={{ position: 'absolute', inset: 0, background: PALETTE.bg, overflow: 'hidden' }}>
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: `linear-gradient(180deg, ${PALETTE.bg} 0%, ${PALETTE.bg} 45%, #d4dde4 60%, #a8c5d8 100%)`,
+        transform: `scale(${cameraScale})`,
+        transformOrigin: 'center bottom',
+      }} />
+
+      <svg viewBox="0 0 1920 1080" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+        <WaveLayer y={680} amplitude={18} wavelength={140} phase={0} color={PALETTE.blueLight} opacity={0.45} time={t * 0.8} />
+        <WaveLayer y={750} amplitude={22} wavelength={180} phase={1.2} color={PALETTE.blue} opacity={0.55} time={t * 0.9} />
+        <WaveLayer y={830} amplitude={28} wavelength={220} phase={2.4} color={PALETTE.blueDeep} opacity={0.85} time={t * 0.7} />
+        <WaveLayer y={920} amplitude={34} wavelength={260} phase={0.8} color={PALETTE.ink} opacity={1} time={t * 0.6} />
+      </svg>
+
+      <div style={{
+        position: 'absolute', left: 0, right: 0, top: 540,
+        height: 1, background: PALETTE.ink, opacity: 0.18,
+      }} />
+
+      <div style={{
+        position: 'absolute', top: 80, left: 120,
+        fontFamily: MONO, fontSize: 14, letterSpacing: '0.24em',
+        textTransform: 'uppercase', color: PALETTE.ink, opacity: subOpacity * 0.7,
+      }}>
+        ↳ Dispatch № 01 · Mediterranean
+      </div>
+
+      <div style={{
+        position: 'absolute', top: 280, left: 120, right: 120,
+        opacity: titleOpacity,
+        transform: `translateY(${titleY}px)`,
+      }}>
+        <div style={{
+          fontFamily: SERIF, fontSize: 128, fontWeight: 400,
+          color: PALETTE.ink, lineHeight: 1.02,
+          letterSpacing: '-0.02em', fontStyle: 'italic',
+        }}>
+          The AI compute race
+        </div>
+        <div style={{
+          fontFamily: SERIF, fontSize: 128, fontWeight: 400,
+          color: PALETTE.ink, lineHeight: 1.02,
+          letterSpacing: '-0.02em',
+        }}>
+          is going <span style={{ color: PALETTE.blue, fontStyle: 'italic' }}>underwater.</span>
+        </div>
+      </div>
+
+      <div style={{
+        position: 'absolute', top: 540, left: 120,
+        fontFamily: SANS, fontSize: 18, letterSpacing: '0.04em',
+        color: PALETTE.ink, opacity: subOpacity * 0.75, fontWeight: 400,
+      }}>
+        A field report on the Mediterranean's coldest server farms.
+      </div>
+    </div>
+  );
+}
+
+// ─── SCENE 2: The Problem (5–15s) ─────────────────────────────────────────────
+
+function DatacenterIcon({ x, y, heat = 0, lit = false }) {
+  const heatColor = `rgba(201, 127, 74, ${heat})`;
+  return (
+    <g transform={`translate(${x},${y})`}>
+      {heat > 0 && (
+        <ellipse cx="60" cy="-20" rx={70 + heat * 30} ry={20 + heat * 15}
+          fill="none" stroke={heatColor} strokeWidth="1" opacity={heat * 0.6} />
+      )}
+      {heat > 0.3 && [0, 1, 2].map(i => (
+        <path key={i}
+          d={`M${30 + i * 25} 0 Q${28 + i * 25} ${-30 - heat * 40} ${32 + i * 25} ${-60 - heat * 50}`}
+          stroke={heatColor} strokeWidth="1.5" fill="none" opacity={heat * 0.7}
+          strokeDasharray="3 4" />
+      ))}
+      <line x1="0" y1="0" x2="120" y2="0" stroke={PALETTE.ink} strokeWidth="2" />
+      <rect x="0" y="0" width="120" height="100" fill={lit ? '#fff5e8' : 'transparent'}
+        stroke={PALETTE.ink} strokeWidth="2" />
+      {[0, 1, 2, 3, 4, 5].map(i => (
+        <g key={i}>
+          <line x1="12" y1={14 + i * 14} x2="108" y2={14 + i * 14}
+            stroke={PALETTE.ink} strokeWidth="1" opacity="0.5" />
+          <circle cx="20" cy={14 + i * 14} r="2"
+            fill={lit ? PALETTE.accent : 'transparent'}
+            opacity={lit ? 0.6 + 0.4 * Math.sin(i + heat * 8) : 0} />
+        </g>
+      ))}
+      <line x1="-10" y1="100" x2="130" y2="100" stroke={PALETTE.ink} strokeWidth="2" />
+    </g>
+  );
+}
+
+function Scene2Problem() {
+  const { localTime } = useSprite();
+  const t = localTime;
+
+  const headlineOpacity = interpolate([0, 0.5, 9.0, 10], [0, 1, 1, 0], Easing.easeOutCubic)(t);
+  const counterStart = 1.5;
+  const counterT = clamp((t - counterStart) / 1.6, 0, 1);
+  const counterValue = Easing.easeOutQuart(counterT) * 945;
+  const heatProgress = clamp((t - 3.5) / 4.5, 0, 1);
+  const dcStarts = [3.8, 4.2, 4.6, 5.0, 5.4];
+  const camY = interpolate([0, 3, 5], [0, 0, -60], Easing.easeInOutCubic)(t);
+  const camScale = interpolate([0, 3, 5, 10], [1, 1, 1.05, 1.1], Easing.easeInOutCubic)(t);
+  const consumeOpacity = interpolate([8.0, 8.7, 9.3, 10], [0, 1, 1, 0], Easing.easeOutCubic)(t);
+
+  return (
+    <div style={{ position: 'absolute', inset: 0, background: PALETTE.bg }}>
+      <div style={{
+        position: 'absolute', top: 60, left: 120,
+        fontFamily: MONO, fontSize: 13, letterSpacing: '0.24em',
+        textTransform: 'uppercase', color: PALETTE.ink, opacity: 0.55,
+      }}>
+        § 01 — The Problem
+      </div>
+
+      <div style={{
+        transform: `translate(0, ${camY}px) scale(${camScale})`,
+        transformOrigin: 'center 60%',
+        position: 'absolute', inset: 0,
+      }}>
+        <div style={{ position: 'absolute', top: 140, left: 120, opacity: headlineOpacity }}>
+          <div style={{
+            fontFamily: SANS, fontSize: 22, color: PALETTE.ink,
+            opacity: 0.7, marginBottom: 16, letterSpacing: '0.02em',
+          }}>
+            By 2030, AI datacenters will consume
+          </div>
+          <div style={{
+            whiteSpace: 'nowrap',
+            display: 'flex', alignItems: 'flex-end', gap: 40,
+          }}>
+            <span style={{
+              fontFamily: SERIF, fontSize: 240, fontWeight: 400,
+              color: PALETTE.ink, lineHeight: 0.9, letterSpacing: '-0.04em',
+              fontVariantNumeric: 'tabular-nums', display: 'inline-block',
+            }}>
+              {counterValue.toFixed(0)}
+            </span>
+            <span style={{
+              fontFamily: SERIF, fontSize: 80, lineHeight: 1.2,
+              fontStyle: 'italic', color: PALETTE.blue,
+              display: 'inline-block', letterSpacing: '0',
+              paddingBottom: 24, paddingLeft: 8,
+            }}>
+              TWh
+            </span>
+          </div>
+          <div style={{
+            fontFamily: MONO, fontSize: 14, color: PALETTE.ink, opacity: 0.5,
+            marginTop: 12, letterSpacing: '0.16em', textTransform: 'uppercase',
+          }}>
+            ≈ 2.3× Japan's annual electricity use
+          </div>
+        </div>
+
+        <svg viewBox="0 0 1920 1080" style={{
+          position: 'absolute', inset: 0, width: '100%', height: '100%',
+          opacity: clamp((t - 3.0) / 0.8, 0, 1),
+        }}>
+          <defs>
+            <linearGradient id="thermalGrad" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0%" stopColor={PALETTE.accent} stopOpacity="0" />
+              <stop offset="100%" stopColor={PALETTE.accent} stopOpacity="1" />
+            </linearGradient>
+          </defs>
+          <line x1="60" y1="900" x2="1860" y2="900" stroke={PALETTE.ink} strokeWidth="1.5" opacity="0.4" />
+          {dcStarts.map((s, i) => {
+            const lit = t > s;
+            const localHeat = clamp((t - s - 0.3) / 4.0, 0, 1) * heatProgress;
+            const xPos = 220 + i * 290;
+            return <DatacenterIcon key={i} x={xPos} y={800} heat={localHeat} lit={lit} />;
+          })}
+          <rect x="0" y="600" width="1920" height="320"
+            fill="url(#thermalGrad)" opacity={heatProgress * 0.35} />
+        </svg>
+
+        <div style={{
+          position: 'absolute', bottom: 140, left: 120,
+          fontFamily: MONO, fontSize: 13, color: PALETTE.accent,
+          letterSpacing: '0.18em', textTransform: 'uppercase',
+          opacity: heatProgress * 0.9,
+        }}>
+          → 40% of that energy becomes <span style={{ fontStyle: 'italic' }}>heat.</span>
+        </div>
+
+        <div style={{
+          position: 'absolute', bottom: 100, left: 120,
+          fontFamily: MONO, fontSize: 13, color: PALETTE.ink,
+          letterSpacing: '0.18em', textTransform: 'uppercase',
+          opacity: consumeOpacity * 0.7,
+        }}>
+          Cooling alone burns <span style={{ color: PALETTE.accent }}>billions of liters</span> of fresh water.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SCENE 3: The Solution (15–30s) ───────────────────────────────────────────
+
+function Capsule({ scale = 1 }) {
+  return (
+    <g transform={`scale(${scale})`}>
+      <rect x="-180" y="-90" width="360" height="180" rx="90" ry="90"
+        fill="#fafafa" stroke={PALETTE.ink} strokeWidth="2.5" />
+      <rect x="-160" y="-70" width="320" height="140" rx="70" ry="70"
+        fill="none" stroke={PALETTE.ink} strokeWidth="1" opacity="0.4" />
+      {[-110, -75, -40, -5, 30, 65, 100].map(rx => (
+        <g key={rx}>
+          <rect x={rx} y="-50" width="22" height="100"
+            fill="none" stroke={PALETTE.ink} strokeWidth="1" opacity="0.65" />
+          {[0, 1, 2, 3, 4, 5, 6].map(i => (
+            <line key={i} x1={rx + 2} y1={-44 + i * 14} x2={rx + 20} y2={-44 + i * 14}
+              stroke={PALETTE.ink} strokeWidth="0.5" opacity="0.5" />
+          ))}
+          <circle cx={rx + 11} cy="-58" r="1.5" fill={PALETTE.blue} opacity="0.8" />
+        </g>
+      ))}
+      <line x1="-150" y1="-90" x2="-150" y2="90" stroke={PALETTE.ink} strokeWidth="1" opacity="0.3" />
+      <line x1="150" y1="-90" x2="150" y2="90" stroke={PALETTE.ink} strokeWidth="1" opacity="0.3" />
+      <line x1="-180" y1="0" x2="-200" y2="0" stroke={PALETTE.ink} strokeWidth="2" />
+      <line x1="180" y1="0" x2="200" y2="0" stroke={PALETTE.ink} strokeWidth="2" />
+      <line x1="0" y1="-90" x2="0" y2="-180" stroke={PALETTE.ink} strokeWidth="1" strokeDasharray="2 4" />
+    </g>
+  );
+}
+
+function CurrentArrow({ x, y, dir = 1, opacity = 1, length = 80 }) {
+  const x2 = x + dir * length;
+  return (
+    <g opacity={opacity}>
+      <path d={`M${x} ${y} Q${x + dir * length / 2} ${y - 6} ${x2} ${y}`}
+        stroke={PALETTE.blue} strokeWidth="1.5" fill="none" />
+      <path d={`M${x2} ${y} L${x2 - dir * 8} ${y - 4} M${x2} ${y} L${x2 - dir * 8} ${y + 4}`}
+        stroke={PALETTE.blue} strokeWidth="1.5" fill="none" />
+    </g>
+  );
+}
+
+function Scene3Solution() {
+  const { localTime } = useSprite();
+  const t = localTime;
+
+  const camY = interpolate(
+    [0, 2.5, 6, 10, 13, 15],
+    [0, 0, -200, -200, -260, -260],
+    Easing.easeInOutCubic
+  )(t);
+  const camScale = interpolate(
+    [0, 2, 6, 10, 11.5, 13.5, 15],
+    [1, 1, 1.05, 1.05, 1.6, 1.05, 1.05],
+    Easing.easeInOutCubic
+  )(t);
+  const capsuleY = interpolate(
+    [0, 2.5, 6, 15],
+    [380, 380, 720, 720],
+    Easing.easeInOutCubic
+  )(t);
+  const depthDark = clamp((t - 2.5) / 4, 0, 1);
+  const sectionOpacity = interpolate([0, 0.5, 14.0, 15], [0, 1, 1, 0], Easing.easeOutCubic)(t);
+
+  const cap1 = interpolate([1.0, 1.6, 4.0, 4.7], [0, 1, 1, 0])(t);
+  const cap2 = interpolate([5.0, 5.6, 8.0, 8.7], [0, 1, 1, 0])(t);
+  const cap3 = interpolate([8.5, 9.2, 12.0, 12.7], [0, 1, 1, 0])(t);
+  const cap4 = interpolate([12.5, 13.2, 14.5, 15], [0, 1, 1, 0])(t);
+
+  const bubbles = React.useMemo(() => Array.from({ length: 14 }, (_, i) => ({
+    x: 850 + (i * 73) % 220 - 110 + Math.sin(i) * 60,
+    yOffset: i * 0.7,
+    r: 2 + (i % 4),
+    speed: 0.4 + (i % 5) * 0.15,
+  })), []);
+
+  const fishList = React.useMemo(() => [
+    { baseX: -100, y: 750, scale: 0.9, dir: 1,  speed: 60, phase: 0 },
+    { baseX: 1900, y: 820, scale: 1.1, dir: -1, speed: 50, phase: 2 },
+    { baseX: -200, y: 880, scale: 0.7, dir: 1,  speed: 80, phase: 5 },
+    { baseX: 2000, y: 920, scale: 0.8, dir: -1, speed: 45, phase: 1 },
+    { baseX: -50,  y: 670, scale: 0.6, dir: 1,  speed: 90, phase: 3 },
+  ], []);
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, background: PALETTE.bg,
+      opacity: sectionOpacity, overflow: 'hidden',
+    }}>
+      <div style={{
+        position: 'absolute', top: 60, left: 120, zIndex: 10,
+        fontFamily: MONO, fontSize: 13, letterSpacing: '0.24em',
+        textTransform: 'uppercase', color: PALETTE.ink, opacity: 0.55,
+      }}>
+        § 02 — The Solution · Off the coast of Tel Aviv
+      </div>
+
+      {/* Sky / sea depth gradient */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: `linear-gradient(180deg,
+          ${PALETTE.bg} 0%, ${PALETTE.bg} 28%,
+          #c8d8e2 32%, #7fb3d5 38%,
+          #2a6fa5 60%, #143654 85%, #0a1f33 100%)`,
+        transform: `translateY(${camY}px) scale(${camScale})`,
+        transformOrigin: 'center 50%',
+      }} />
+
+      {/* Scene elements moving with camera */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        transform: `translateY(${camY}px) scale(${camScale})`,
+        transformOrigin: 'center 50%',
+      }}>
+        <svg viewBox="0 0 1920 1080" style={{ width: '100%', height: '100%', position: 'absolute', inset: 0 }}>
+          <line x1="0" y1="340" x2="1920" y2="340" stroke={PALETTE.ink} strokeWidth="1" opacity="0.25" />
+
+          {/* Tel Aviv coastline silhouette */}
+          <g opacity="0.4">
+            {[100, 160, 200, 250, 290, 330, 380, 430, 480, 530, 590].map((bx, i) => {
+              const h = [40, 90, 60, 120, 80, 110, 70, 95, 50, 85, 55][i];
+              return (
+                <rect key={i} x={bx} y={340 - h} width={28 + (i % 3) * 6} height={h}
+                  fill="none" stroke={PALETTE.ink} strokeWidth="1" />
+              );
+            })}
+            <line x1="0" y1="340" x2="600" y2="340" stroke={PALETTE.ink} strokeWidth="1.5" />
+            <text x="200" y="370" fill={PALETTE.ink} opacity="0.7"
+              style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.18em', textTransform: 'uppercase' }}>
+              Tel Aviv shoreline
+            </text>
+          </g>
+
+          {/* Water surface wave */}
+          <WaveLayer y={340} amplitude={6} wavelength={120} phase={0} color={PALETTE.blue} opacity={0.3} time={t * 1.5} width={1920} />
+
+          {/* Depth markers */}
+          <g opacity="0.4">
+            <line x1="120" y1="340" x2="120" y2="980" stroke={PALETTE.blue} strokeWidth="0.5" strokeDasharray="2 6" />
+            {[
+              { y: 460, label: '−10m' },
+              { y: 580, label: '−25m' },
+              { y: 700, label: '−50m' },
+              { y: 820, label: '−80m' },
+            ].map((d, i) => (
+              <g key={i}>
+                <line x1="115" y1={d.y} x2="135" y2={d.y} stroke={PALETTE.blue} strokeWidth="1" />
+                <text x="148" y={d.y + 4} fill={PALETTE.white} opacity="0.85"
+                  style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em' }}>
+                  {d.label}
+                </text>
+              </g>
+            ))}
+          </g>
+
+          {/* Seawater currents */}
+          <g opacity={depthDark}>
+            <CurrentArrow x={620} y={capsuleY - 30} dir={1} length={140} opacity={0.4 + 0.3 * Math.sin(t * 1.2)} />
+            <CurrentArrow x={1180} y={capsuleY + 20} dir={-1} length={140} opacity={0.4 + 0.3 * Math.sin(t * 1.2 + 1.5)} />
+            <CurrentArrow x={580} y={capsuleY + 60} dir={1} length={120} opacity={0.3 + 0.3 * Math.sin(t * 1.4 + 0.7)} />
+            <CurrentArrow x={1220} y={capsuleY - 50} dir={-1} length={110} opacity={0.3 + 0.3 * Math.sin(t * 1.3 + 2.1)} />
+          </g>
+
+          {/* Fish */}
+          <g opacity={clamp((t - 5) / 1, 0, 1)}>
+            {fishList.map((f, i) => {
+              const xPos = f.baseX + f.dir * ((t * f.speed) % 2200);
+              return <Fish key={i} x={xPos} y={f.y + Math.sin(t * 1.5 + f.phase) * 8}
+                scale={f.scale} dir={f.dir} color={PALETTE.ink} />;
+            })}
+          </g>
+
+          {/* Rising bubbles */}
+          <g opacity={depthDark}>
+            {bubbles.map((b, i) => {
+              const y = capsuleY + 40 - ((t * b.speed * 80 + b.yOffset * 100) % 600);
+              return <Bubble key={i} x={b.x + Math.sin(t + i) * 6} y={y} r={b.r} opacity={0.5} />;
+            })}
+          </g>
+
+          {/* Server capsule */}
+          <g transform={`translate(960, ${capsuleY})`}>
+            <Capsule scale={1} />
+          </g>
+        </svg>
+      </div>
+
+      {/* Captions — fixed, don't move with camera */}
+      <div style={{ position: 'absolute', top: 180, right: 80, width: 480, opacity: cap1 }}>
+        <div style={{
+          fontFamily: MONO, fontSize: 12, letterSpacing: '0.2em',
+          textTransform: 'uppercase', color: PALETTE.ink, opacity: 0.6, marginBottom: 12,
+        }}>↳ Step 01</div>
+        <div style={{
+          fontFamily: SERIF, fontSize: 46, fontWeight: 400,
+          color: PALETTE.ink, lineHeight: 1.1, letterSpacing: '-0.01em',
+        }}>
+          Sealed in <span style={{ fontStyle: 'italic', color: PALETTE.blue }}>nitrogen.</span>
+        </div>
+        <div style={{
+          fontFamily: SANS, fontSize: 16, color: PALETTE.ink,
+          opacity: 0.7, marginTop: 24, lineHeight: 1.5,
+        }}>
+          A pressurized server capsule, no humans inside, no oxygen to corrode.
+        </div>
+      </div>
+
+      <div style={{ position: 'absolute', top: 470, right: 80, width: 480, opacity: cap2 }}>
+        <div style={{
+          fontFamily: MONO, fontSize: 12, letterSpacing: '0.2em',
+          textTransform: 'uppercase', color: PALETTE.white, opacity: 0.7, marginBottom: 12,
+        }}>↳ Step 02</div>
+        <div style={{
+          fontFamily: SERIF, fontSize: 46, fontWeight: 400,
+          color: PALETTE.white, lineHeight: 1.1, letterSpacing: '-0.01em',
+        }}>
+          Cooled by <span style={{ fontStyle: 'italic', color: PALETTE.blueLight }}>seawater.</span>
+        </div>
+        <div style={{
+          fontFamily: SANS, fontSize: 16, color: PALETTE.white,
+          opacity: 0.75, marginTop: 24, lineHeight: 1.5,
+        }}>
+          Mediterranean currents pull heat off the hull — passive, continuous, free.
+        </div>
+      </div>
+
+      <div style={{ position: 'absolute', bottom: 200, left: 100, width: 500, opacity: cap3 }}>
+        <div style={{
+          fontFamily: MONO, fontSize: 12, letterSpacing: '0.2em',
+          textTransform: 'uppercase', color: PALETTE.white, opacity: 0.7, marginBottom: 12,
+        }}>↳ Step 03</div>
+        <div style={{
+          fontFamily: SERIF, fontSize: 46, fontWeight: 400,
+          color: PALETTE.white, lineHeight: 1.1, letterSpacing: '-0.01em',
+        }}>
+          Anchored at <span style={{ fontStyle: 'italic', color: PALETTE.blueLight }}>−80m.</span>
+        </div>
+        <div style={{
+          fontFamily: SANS, fontSize: 16, color: PALETTE.white,
+          opacity: 0.75, marginTop: 24, lineHeight: 1.5,
+        }}>
+          Six kilometers offshore. Ambient water sits at 14°C year-round.
+        </div>
+      </div>
+
+      <div style={{ position: 'absolute', bottom: 140, right: 100, opacity: cap4, textAlign: 'right' }}>
+        <div style={{
+          fontFamily: MONO, fontSize: 13, letterSpacing: '0.2em',
+          textTransform: 'uppercase', color: PALETTE.white, opacity: 0.7,
+        }}>One capsule · 8 megawatts · 864 servers</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SCENE 4: Stat cards (30–40s) ─────────────────────────────────────────────
+
+function StatCard({ index, value, suffix, label, sublabel, t, startTime }) {
+  const local = t - startTime;
+  const slideIn = clamp(local / 0.7, 0, 1);
+  const slideEased = Easing.easeOutCubic(slideIn);
+  const opacity = clamp(local / 0.5, 0, 1);
+  const tx = (1 - slideEased) * 80;
+  const counterT = clamp((local - 0.4) / 1.2, 0, 1);
+
+  return (
+    <div style={{
+      position: 'absolute',
+      left: 160 + index * 540,
+      top: 280,
+      width: 480,
+      opacity,
+      transform: `translateX(${tx}px)`,
+    }}>
+      <div style={{
+        fontFamily: MONO, fontSize: 13, letterSpacing: '0.24em',
+        color: PALETTE.ink, opacity: 0.45, marginBottom: 24,
+      }}>
+        № {String(index + 1).padStart(2, '0')}
+      </div>
+
+      <div style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'flex-end', gap: 56 }}>
+        <span style={{
+          fontFamily: SERIF, fontSize: 220, fontWeight: 400,
+          color: PALETTE.ink, lineHeight: 0.9, letterSpacing: '-0.02em',
+          fontVariantNumeric: 'tabular-nums', display: 'inline-block',
+        }}>
+          {(value * Easing.easeOutQuart(counterT)).toFixed(0)}
+        </span>
+        <span style={{
+          fontFamily: SERIF, fontSize: 90, lineHeight: 1.2,
+          fontStyle: 'italic', color: PALETTE.blue, letterSpacing: '0',
+          display: 'inline-block', paddingBottom: 22, paddingLeft: 24,
+        }}>{suffix}</span>
+      </div>
+
+      <div style={{
+        height: 1, background: PALETTE.ink, opacity: 0.3,
+        width: '100%', marginTop: 32, marginBottom: 24,
+        transform: `scaleX(${slideEased})`, transformOrigin: 'left',
+      }} />
+
+      <div style={{
+        fontFamily: SERIF, fontSize: 36, fontStyle: 'italic',
+        color: PALETTE.ink, lineHeight: 1.15, letterSpacing: '-0.01em',
+      }}>{label}</div>
+
+      <div style={{
+        fontFamily: SANS, fontSize: 14, color: PALETTE.ink,
+        opacity: 0.6, marginTop: 16, lineHeight: 1.5,
+      }}>{sublabel}</div>
+    </div>
+  );
+}
+
+function Scene4Stats() {
+  const { localTime } = useSprite();
+  const t = localTime;
+
+  const sectionOpacity = interpolate([0, 0.4, 9.0, 10], [0, 1, 1, 0], Easing.easeOutCubic)(t);
+  const titleOpacity = interpolate([0, 0.6, 8.5, 10], [0, 1, 1, 0])(t);
+
+  return (
+    <div style={{ position: 'absolute', inset: 0, background: PALETTE.bg, opacity: sectionOpacity }}>
+      <div style={{
+        position: 'absolute', top: 60, left: 120,
+        fontFamily: MONO, fontSize: 13, letterSpacing: '0.24em',
+        textTransform: 'uppercase', color: PALETTE.ink, opacity: 0.55,
+      }}>
+        § 03 — The Numbers
+      </div>
+
+      <div style={{ position: 'absolute', top: 140, left: 120, opacity: titleOpacity }}>
+        <div style={{
+          fontFamily: SERIF, fontSize: 64, fontWeight: 400,
+          color: PALETTE.ink, lineHeight: 1.05, letterSpacing: '-0.02em',
+        }}>
+          Why <span style={{ fontStyle: 'italic', color: PALETTE.blue }}>underwater</span> wins.
+        </div>
+      </div>
+
+      <StatCard index={0} value={40} suffix="%" t={t} startTime={1.0}
+        label="Lower cooling costs."
+        sublabel="Seawater replaces compressors and chillers — the single biggest line item in datacenter operations." />
+
+      <StatCard index={1} value={0} suffix="L" t={t} startTime={3.5}
+        label="Freshwater used."
+        sublabel="Land-based facilities evaporate ~5 million liters per megawatt per year. Subsea capsules use none." />
+
+      <StatCard index={2} value={8} suffix="×" t={t} startTime={6.0}
+        label="Closer to European users."
+        sublabel="Tel Aviv → Frankfurt latency drops from 64ms to 8ms via direct Mediterranean fiber routes." />
+
+      <div style={{
+        position: 'absolute', bottom: 100, left: 120, right: 120,
+        height: 1, background: PALETTE.ink, opacity: 0.2,
+      }} />
+      <div style={{
+        position: 'absolute', bottom: 60, left: 120,
+        fontFamily: MONO, fontSize: 12, letterSpacing: '0.2em',
+        textTransform: 'uppercase', color: PALETTE.ink, opacity: 0.55,
+      }}>
+        Sources · IEA 2025 · Mediterranean Cable Consortium
+      </div>
+    </div>
+  );
+}
+
+// ─── SCENE 5: Closing card (40–45s) ───────────────────────────────────────────
+
+function Scene5Closing() {
+  const { localTime } = useSprite();
+  const t = localTime;
+
+  const fadeIn   = interpolate([0, 1.0], [0, 1], Easing.easeOutCubic)(t);
+  const lineGrow = interpolate([0.6, 1.8], [0, 1], Easing.easeInOutCubic)(t);
+  const subFade  = interpolate([1.4, 2.2], [0, 1], Easing.easeOutCubic)(t);
+  const dateFade = interpolate([2.4, 3.2], [0, 1], Easing.easeOutCubic)(t);
+  const logoFade = interpolate([3.4, 4.2], [0, 1], Easing.easeOutCubic)(t);
+
+  const bubbles = React.useMemo(() => Array.from({ length: 18 }, (_, i) => ({
+    x: 80 + (i * 113) % 1760,
+    yOffset: i * 0.3,
+    r: 1.5 + (i % 4) * 0.8,
+    speed: 0.15 + (i % 5) * 0.04,
+  })), []);
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0,
+      background: `linear-gradient(180deg, ${PALETTE.bg} 0%, ${PALETTE.bg} 60%, #d8dde0 100%)`,
+      opacity: fadeIn, overflow: 'hidden',
+    }}>
+      <svg viewBox="0 0 1920 1080" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
+        {bubbles.map((b, i) => {
+          const y = 1100 - ((t * b.speed * 80 + b.yOffset * 200) % 1100);
+          return <Bubble key={i} x={b.x + Math.sin(t * 0.5 + i) * 8} y={y} r={b.r} opacity={0.25} />;
+        })}
+      </svg>
+
+      <div style={{
+        position: 'absolute', top: 60, left: 120,
+        fontFamily: MONO, fontSize: 13, letterSpacing: '0.24em',
+        textTransform: 'uppercase', color: PALETTE.ink, opacity: 0.55,
+      }}>
+        § Fin.
+      </div>
+
+      <div style={{ position: 'absolute', top: 360, left: 120, right: 120 }}>
+        <div style={{
+          fontFamily: SERIF, fontSize: 132, fontWeight: 400,
+          color: PALETTE.ink, lineHeight: 1.0, letterSpacing: '-0.025em',
+        }}>
+          Israel's <span style={{ fontStyle: 'italic', color: PALETTE.blue }}>underwater</span>
+        </div>
+        <div style={{
+          fontFamily: SERIF, fontSize: 132, fontWeight: 400,
+          color: PALETTE.ink, lineHeight: 1.0, marginTop: 8, letterSpacing: '-0.025em',
+        }}>
+          datacenter race.
+        </div>
+
+        <div style={{
+          height: 1, background: PALETTE.ink,
+          width: '100%', marginTop: 60,
+          transform: `scaleX(${lineGrow})`, transformOrigin: 'left',
+          opacity: 0.4,
+        }} />
+
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+          marginTop: 32,
+        }}>
+          <div style={{
+            fontFamily: SANS, fontSize: 22, color: PALETTE.ink,
+            opacity: subFade * 0.75, fontWeight: 400, letterSpacing: '0.02em',
+          }}>
+            First capsule submerges off Herzliya.
+          </div>
+          <div style={{
+            fontFamily: SERIF, fontSize: 56, fontStyle: 'italic',
+            color: PALETTE.blue, opacity: dateFade, letterSpacing: '-0.01em',
+          }}>
+            Starts 2026.
+          </div>
+        </div>
+      </div>
+
+      {/* Logo placeholder */}
+      <div style={{
+        position: 'absolute', bottom: 80, right: 120,
+        opacity: logoFade,
+        display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6,
+      }}>
+        <div style={{
+          width: 160, height: 56,
+          border: `1.5px dashed ${PALETTE.ink}`,
+          borderRadius: 4,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontFamily: MONO, fontSize: 11,
+          letterSpacing: '0.2em', textTransform: 'uppercase',
+          color: PALETTE.ink, opacity: 0.55,
+        }}>
+          [ logo ]
+        </div>
+      </div>
+
+      <div style={{
+        position: 'absolute', bottom: 80, left: 120,
+        fontFamily: MONO, fontSize: 12, letterSpacing: '0.22em',
+        textTransform: 'uppercase', color: PALETTE.ink, opacity: logoFade * 0.5,
+      }}>
+        End of dispatch.
+      </div>
+    </div>
+  );
+}
+
+// ─── Root ─────────────────────────────────────────────────────────────────────
+
+function TimestampLabel() {
+  const time = useTime();
+  React.useEffect(() => {
+    const root = document.getElementById('video-root');
+    if (root) {
+      const sec = Math.floor(time);
+      root.setAttribute('data-screen-label', `t=${sec}s`);
+    }
+  }, [Math.floor(time)]);
+  return null;
+}
+
+function Video() {
+  return (
+    <div id="video-root" data-screen-label="t=0s" style={{ position: 'absolute', inset: 0 }}>
+      <Stage width={1920} height={1080} duration={45} background={PALETTE.bg} persistKey="underwater-dc">
+        <TimestampLabel />
+        <Sprite start={0} end={5}>
+          <Scene1ColdOpen />
+        </Sprite>
+        <Sprite start={5} end={15}>
+          <Scene2Problem />
+        </Sprite>
+        <Sprite start={15} end={30}>
+          <Scene3Solution />
+        </Sprite>
+        <Sprite start={30} end={40}>
+          <Scene4Stats />
+        </Sprite>
+        <Sprite start={40} end={45}>
+          <Scene5Closing />
+        </Sprite>
+      </Stage>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<Video />);
+
+</script>
+</body>
+</html>
